@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root { --bg:#111; --stage:#fff; }
+html, body { margin:0; height:100%; background:var(--bg); font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial; }
+.wrap { position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
+
+/* Stage */
+.stage {
+  width:min(80vmin,720px);
+  height:min(80vmin,720px);
+  background:var(--stage);
+  border-radius:8px;
+  box-shadow:0 6px 18px rgba(0,0,0,0.6);
+  position:relative;
+  overflow:hidden;
+}
+
+/* March sprite */
+#march {
+  position:absolute;
+  width:140px;
+  height:140px;
+  left:0; top:0;
+  transform-origin:center bottom;
+  pointer-events:auto;
+  transition: transform 0.15s ease;
+}
+
+/* Hover shrink for desktop */
+#march:hover { transform: scale(0.95); }
+
+/* Joystick */
+#joystick {
+  position:fixed;
+  bottom:20px;
+  left:20px;
+  width:120px;
+  height:120px;
+  border-radius:50%;
+  background:rgba(255,255,255,0.3);
+  z-index:10;
+}
+#joystick .stick {
+  width:80px;
+  height:80px;
+  border-radius:50%;
+  background:white;
+  transform:translate(0,0);
+  margin:20px;
+}
+@media (hover:hover) and (pointer:fine){ #joystick { display:none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="stage" class="stage">
+    <img id="march" src="https://i.postimg.cc/0r1jycP7/March.png" draggable="false">
+  </div>
+  <div id="joystick"><div class="stick" id="stick"></div></div>
+</div>
+
+<script>
+const stage = document.getElementById('stage');
+const march = document.getElementById('march');
+const joystick = document.getElementById('joystick');
+const stick = document.getElementById('stick');
+
+// Position & movement
+let pos = {x:0,y:0};
+let vel = {x:0,y:0};
+const maxSpeed = 220;
+const accel = 1600;
+
+function init(){
+  const r = stage.getBoundingClientRect();
+  pos.x = (r.width - march.offsetWidth)/2;
+  pos.y = (r.height - march.offsetHeight)/2;
+  applyPos();
+}
+function applyPos(){ march.style.left = pos.x + 'px'; march.style.top = pos.y + 'px'; }
+
+// Keyboard
+const keys={w:false,a:false,s:false,d:false};
+window.addEventListener('keydown', e=>{
+  const k=e.key.toLowerCase();
+  if(['w','a','s','d'].includes(k)){ keys[k]=true; e.preventDefault(); }
+});
+window.addEventListener('keyup', e=>{
+  const k=e.key.toLowerCase();
+  if(['w','a','s','d'].includes(k)){ keys[k]=false; e.preventDefault(); }
+});
+
+// Joystick
+let joyActive=false;
+let joyCenter={x:0,y:0};
+let joyMax=80;
+let joyVec={x:0,y:0};
+
+function layoutJoystick(){
+  const rc=joystick.getBoundingClientRect();
+  joyCenter.x = rc.left + rc.width/2;
+  joyCenter.y = rc.top + rc.height/2;
+  joyMax = Math.min(rc.width, rc.height)/2 - 10;
+}
+layoutJoystick();
+window.addEventListener('resize', layoutJoystick);
+
+function setStick(clientX, clientY){
+  const dx = clientX - joyCenter.x;
+  const dy = clientY - joyCenter.y;
+  const dist = Math.hypot(dx,dy);
+  const limited = Math.min(dist, joyMax);
+  const nx = dx / (dist||1);
+  const ny = dy / (dist||1);
+  stick.style.transform = `translate(${nx*limited}px, ${ny*limited}px)`;
+  joyVec.x = nx*limited/joyMax;
+  joyVec.y = ny*limited/joyMax;
+}
+
+joystick.addEventListener('pointerdown', e=>{
+  joystick.setPointerCapture(e.pointerId);
+  joyActive=true; layoutJoystick(); setStick(e.clientX,e.clientY);
+});
+joystick.addEventListener('pointermove', e=>{ if(!joyActive) return; setStick(e.clientX,e.clientY); });
+joystick.addEventListener('pointerup', e=>{
+  joystick.releasePointerCapture(e.pointerId);
+  joyActive=false; stick.style.transform='translate(0,0)'; joyVec={x:0,y:0};
+});
+
+// Game loop
+let last = performance.now();
+function loop(now){
+  const dt = Math.min((now-last)/1000,1/30);
+  last=now;
+
+  // Input
+  let ix=0, iy=0;
+  if(keys.a) ix-=1; if(keys.d) ix+=1; if(keys.w) iy-=1; if(keys.s) iy+=1;
+  if(ix!==0 || iy!==0){ const l=Math.hypot(ix,iy); ix/=l; iy/=l; }
+
+  const inputX = joyActive?joyVec.x:ix;
+  const inputY = joyActive?joyVec.y:iy;
+
+  // Velocity smoothing
+  const tgtX = inputX*maxSpeed;
+  const tgtY = inputY*maxSpeed;
+  const dx = tgtX - vel.x; const dy = tgtY - vel.y;
+  const maxStep = accel*dt;
+  vel.x += Math.sign(dx)*Math.min(Math.abs(dx), maxStep);
+  vel.y += Math.sign(dy)*Math.min(Math.abs(dy), maxStep);
+
+  // Apply movement
+  pos.x += vel.x*dt;
+  pos.y += vel.y*dt;
+
+  // Stage bounds
+  const r = stage.getBoundingClientRect();
+  pos.x = Math.min(Math.max(0,pos.x), r.width - march.offsetWidth);
+  pos.y = Math.min(Math.max(0,pos.y), r.height - march.offsetHeight);
+  applyPos();
+
+  // Squishy animation
+  const speed = Math.hypot(vel.x, vel.y);
+  const moving = speed>8;
+  const t = now/600;
+  let squashX=1, squashY=1;
+  if(moving){
+    const factor = 0.12 + 0.04*Math.sin(t*2);
+    squashX = 1 + factor*Math.abs(Math.sin(t*1.5)); 
+    squashY = 1 - factor*Math.abs(Math.cos(t*1.5));
+  }
+
+  const bob = moving ? Math.sin(t*1.5)*4 : 0;
+
+  // Fast flipping effect
+  const facing = vel.x < 0 ? -1 : (vel.x > 0 ? 1 : (march._facing || 1));
+  march._facing = facing;
+
+  march.style.transform = `translate(${-march.offsetWidth/2}px, ${-march.offsetHeight*0.28+bob}px) scaleX(${facing*squashX}) scaleY(${squashY})`;
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+march.addEventListener('load', init);
+window.addEventListener('load', ()=>{ if(march.complete) init(); layoutJoystick(); });
+window.addEventListener('resize', ()=>{ init(); layoutJoystick(); });
+window.addEventListener('touchmove', e=>{ if(joyActive) e.preventDefault(); }, {passive:false});
+</script>
+</body>
+</html>
